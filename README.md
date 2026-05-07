@@ -221,6 +221,8 @@ The final response is returned as bubbles:
 ```
 
 ## Test Result
+
+```text
 SalesGPT chatbot is ready. Type your message, or type /exit to quit.
 Ted: Hi, this is Ted from Sleep Haven. I am here to help you find a better sleep solution or the right mattress.
 
@@ -266,6 +268,7 @@ Ted: Also, could you please let me know your preferred payment method?
 Ted [image: Spring Sleep Sale promotion image]: https://example.com/images/spring-sale.jpg
 
 You: 
+```
 
 ## Project Status
 
