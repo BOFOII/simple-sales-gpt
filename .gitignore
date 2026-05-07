@@ -1,0 +1,37 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Chroma / local vector store data
+chroma-data/
+chroma/
+
+# Go build outputs
+bin/
+dist/
+build/
+*.exe
+*.test
+*.out
+
+# Go coverage / profiling
+coverage.out
+coverage.html
+*.prof
+
+# Local editor / tooling
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Temporary files
+tmp/
+temp/
