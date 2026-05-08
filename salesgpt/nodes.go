@@ -13,11 +13,17 @@ const (
 	contextBuilderNodeName          = "context_builder"
 	reasoningNodeName               = "reasoning"
 	reasoningParserNodeName         = "reasoning_parser"
+	stageSelectorNodeName           = "stage_selector"
 	languageSelectorNodeName        = "language_selector"
 	toolExecutionNodeName           = "tool_execution"
 	missingToolCollectorNodeName    = "missing_tool_collector"
 	missingToolQuestionPlanNodeName = "missing_tool_question_plan"
 	responseNodeName                = "final_response"
+)
+
+const (
+	HandoffPriorityNormal = "normal"
+	HandoffPriorityUrgent = "urgent"
 )
 
 type salesGPTNodeState struct {
@@ -43,6 +49,7 @@ type StepResult struct {
 	Language                      string
 	Stage                         string
 	Interest                      string
+	Handoff                       StepHandoff
 	Score                         StepScore
 	PlanActions                   []StepPlanAction
 	Tools                         []StepReasoningTool
@@ -73,6 +80,13 @@ type StepScoreDetail struct {
 type StepPlanAction struct {
 	Action    string
 	Rationale string
+}
+
+type StepHandoff struct {
+	Required bool
+	Reason   string
+	Priority string
+	Summary  string
 }
 
 type StepReasoningTool struct {
@@ -123,6 +137,7 @@ type missingToolParameter struct {
 type reasoningResult struct {
 	Conversation reasoningConversation `json:"conversation"`
 	Language     string                `json:"language"`
+	Handoff      reasoningHandoff      `json:"handoff"`
 	Plan         reasoningPlan         `json:"plan"`
 	Tools        []reasoningTool       `json:"tools"`
 }
@@ -149,6 +164,13 @@ type reasoningScoreDetail struct {
 	Score       int    `json:"score"`
 	Reason      string `json:"reason"`
 	Improvement string `json:"improvement"`
+}
+
+type reasoningHandoff struct {
+	Required bool   `json:"required"`
+	Reason   string `json:"reason"`
+	Priority string `json:"priority"`
+	Summary  string `json:"summary"`
 }
 
 type reasoningPlan struct {
@@ -181,6 +203,7 @@ func newStepResult(state salesGPTNodeState, debug bool) StepResult {
 		Language:              state.Reasoning.Language,
 		Stage:                 state.Reasoning.Conversation.Stage,
 		Interest:              state.Reasoning.Conversation.Interest.Value,
+		Handoff:               stepHandoff(state.Reasoning.Handoff),
 		Score:                 stepScore(state.Reasoning.Conversation.Score),
 		PlanActions:           stepPlanActions(state.Reasoning.Plan.Actions),
 		Tools:                 stepReasoningTools(state.Reasoning.Tools),
@@ -193,6 +216,15 @@ func newStepResult(state salesGPTNodeState, debug bool) StepResult {
 	}
 
 	return result
+}
+
+func stepHandoff(handoff reasoningHandoff) StepHandoff {
+	return StepHandoff{
+		Required: handoff.Required,
+		Reason:   handoff.Reason,
+		Priority: handoff.Priority,
+		Summary:  handoff.Summary,
+	}
 }
 
 func stepScore(score reasoningScore) StepScore {
@@ -425,6 +457,21 @@ func (salesGPT *SalesGPT) reasoningParserNode(_ context.Context, state salesGPTN
 	}
 
 	state.Reasoning = reasoning
+	return state, nil
+}
+
+func (salesGPT *SalesGPT) stageSelectorNode(_ context.Context, state salesGPTNodeState) (salesGPTNodeState, error) {
+	stageID := strings.TrimSpace(state.Reasoning.Conversation.Stage)
+	if stageID == "" {
+		return state, nil
+	}
+
+	stage, exists := salesGPT.stages.Get(stageID)
+	if !exists {
+		return state, nil
+	}
+
+	salesGPT.conversationStage = &stage
 	return state, nil
 }
 

@@ -15,6 +15,9 @@ HARD RULES:
 - "language" must be the best response language for the customer based on the conversation history. Use the configured language when there is not enough evidence to switch.
 - If the latest customer messages are clearly in another language, set "language" to that customer language even if the configured language is different.
 - "conversation.interest.value" → must be one of the interest IDs listed in INTEREST LEVELS.
+- "handoff.required" must be true when the customer explicitly asks to speak with a human agent, real person, admin, sales team, support team, or asks the AI/bot to stop handling the conversation.
+- "handoff.required" should also be true when the customer needs escalation beyond the AI agent's authority, such as urgent complaints, special negotiation, legal/payment/account decisions, or repeated unresolved frustration.
+- "handoff.priority" must be "normal" or "urgent". Use "urgent" only for time-sensitive, high-risk, angry, complaint, payment/account-blocking, or business-critical escalation.
 - "tools[].tool_name" → must be one of the tool names listed in AVAILABLE TOOLS.
 - "tools[].params" keys → must match that tool's declared parameter names exactly.
 - "tools[].action" is "run" → "missing" must be [].
@@ -73,6 +76,12 @@ OUTPUT SHAPE:
     }
   },
   "language": "<response language, e.g. English or Indonesian>",
+  "handoff": {
+    "required": false,
+    "reason": "<one sentence evidence, or empty string when not required>",
+    "priority": "normal|urgent",
+    "summary": "<one sentence summary for the human agent, or empty string when not required>"
+  },
   "plan": {
     "actions": [
       {
