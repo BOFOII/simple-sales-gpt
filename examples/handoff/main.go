@@ -101,6 +101,12 @@ func main() {
 	// with agent.StepWithOptions(ctx, salesgpt.StepOptions{Invoke: true}).
 	handoffActive = false
 	fmt.Printf("handoff active after return to bot: %t\n", handoffActive)
+	// This records a handoff-status message in conversation history. The external
+	// flag stops app routing, but the history message tells future reasoning that
+	// the old handoff request was already handled and AI may continue normally.
+	if err := agent.InvokeDisableHandoff(ctx); err != nil {
+		log.Fatalf("failed to save handoff status: %v", err)
+	}
 
 	resumeUserMessage := "I understand now. Can you recommend the next step?"
 	if !handoffActive {

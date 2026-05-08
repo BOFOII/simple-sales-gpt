@@ -1,6 +1,7 @@
 package salesgpt
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/tmc/langchaingo/llms"
@@ -17,6 +18,7 @@ const (
 	defaultConversationPurpose = "understand the customer's needs and help them find a suitable solution."
 	defaultLanguage            = "English"
 	defaultContextWindowSize   = 20
+	humanHandoffEndedMessage   = "The previous human handoff has ended and control has returned to the AI assistant. Treat earlier human-handoff requests as already handled. Only set handoff.required=true again if the customer makes a new explicit request to speak with a human, customer service, support, sales team, admin, or real person, or if a new escalation is clearly needed."
 )
 
 type SalesGPT struct {
@@ -174,6 +176,16 @@ func (salesGPT SalesGPT) ConversationStage() (Stage, bool) {
 
 func (salesGPT SalesGPT) ConversationHistory() schema.ChatMessageHistory {
 	return salesGPT.conversationHistory
+}
+
+func (salesGPT SalesGPT) InvokeDisableHandoff(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	return salesGPT.conversationHistory.AddMessage(ctx, llms.SystemChatMessage{
+		Content: humanHandoffEndedMessage,
+	})
 }
 
 func (salesGPT SalesGPT) ContextWindowSize() int {
