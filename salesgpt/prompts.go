@@ -139,8 +139,8 @@ func newMissingToolQuestionPlanPrompt(missingToolParameters string) string {
 	return fmt.Sprintf(missingToolQuestionPlanPromptTemplate, strings.TrimSpace(missingToolParameters))
 }
 
-const finalResponsePromptTemplate = `You are the final response writer for a sales conversation AI.
-Create the next customer-facing response using the salesperson profile, reasoning result, executed tool results, and missing-parameter question plan.
+const responsePromptTemplate = `You are the response writer for a sales conversation AI.
+Create the next customer-facing response using the response context.
 Return a single JSON object. No markdown. No explanation. JSON only.
 
 HARD RULES:
@@ -153,7 +153,7 @@ HARD RULES:
 - If promotion suggestion/search results are available, mention the relevant offer briefly when it helps the next step.
 - If there is a missing-parameter question plan, ask the planned question naturally.
 - If a tool has action "ask", use its known params and missing params from the reasoning result to make the question specific.
-- Treat the conversation history inside the reasoning result as interaction memory.
+- Treat the conversation history as interaction memory.
 - Do not repeat the same recommendation, promotion pitch, lead-capture request, image/media bubble, or question if it was already sent recently and the customer has not asked for it again.
 - If the customer has already shown interest in an offer or item, continue from that interest with the next useful detail, comparison, answer, or next step instead of pitching it again from the beginning.
 - If an image URL or media for the same item was already sent in conversation history, do not send the same image again unless the customer asks to see it again.
@@ -178,24 +178,12 @@ OUTPUT SHAPE:
   ]
 }
 
-SALESPERSON PROFILE:
-%s
-
-REASONING RESULT:
-%s
-
-EXECUTED TOOL RESULTS:
-%s
-
-MISSING-PARAMETER QUESTION PLAN:
+RESPONSE CONTEXT:
 %s`
 
-func newFinalResponsePrompt(profile, reasoning, toolResults, missingQuestionPlan string) string {
+func newResponsePrompt(responseContext string) string {
 	return fmt.Sprintf(
-		finalResponsePromptTemplate,
-		strings.TrimSpace(profile),
-		strings.TrimSpace(reasoning),
-		strings.TrimSpace(toolResults),
-		strings.TrimSpace(missingQuestionPlan),
+		responsePromptTemplate,
+		strings.TrimSpace(responseContext),
 	)
 }

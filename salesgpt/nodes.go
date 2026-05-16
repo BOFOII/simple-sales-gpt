@@ -18,8 +18,11 @@ const (
 	toolExecutionNodeName           = "tool_execution"
 	missingToolCollectorNodeName    = "missing_tool_collector"
 	missingToolQuestionPlanNodeName = "missing_tool_question_plan"
-	responseNodeName                = "final_response"
+	responseContextNodeName         = "response_context"
+	responseNodeName                = "response"
 )
+
+const responseContextConversationHistoryLimit = 20
 
 const (
 	HandoffPriorityNormal = "normal"
@@ -30,6 +33,7 @@ type salesGPTNodeState struct {
 	Invoke                        bool
 	Input                         string
 	Context                       string
+	ConversationHistory           string
 	ReasoningPrompt               string
 	ReasoningOutput               string
 	Reasoning                     reasoningResult
@@ -37,8 +41,9 @@ type salesGPTNodeState struct {
 	missingToolParameters         []missingToolParameter
 	MissingToolQuestionPlanPrompt string
 	MissingToolQuestionPlanOutput string
-	FinalResponsePrompt           string
-	FinalResponseOutput           string
+	ResponseContext               string
+	ResponsePrompt                string
+	ResponseOutput                string
 }
 
 type StepResult struct {
@@ -118,7 +123,7 @@ type toolExecutionResult struct {
 	Error    string
 }
 
-type finalResponseBubbleMessage struct {
+type responseBubbleMessage struct {
 	Bubbles []struct {
 		Type     string `json:"type"`
 		Text     string `json:"text"`
@@ -198,8 +203,8 @@ type reasoningMissingTool struct {
 func newStepResult(state salesGPTNodeState, debug bool) StepResult {
 	result := StepResult{
 		Invoked:               state.Invoke,
-		ResponseOutput:        state.FinalResponseOutput,
-		Bubbles:               responseBubbles(state.FinalResponseOutput),
+		ResponseOutput:        state.ResponseOutput,
+		Bubbles:               responseBubbles(state.ResponseOutput),
 		Language:              state.Reasoning.Language,
 		Stage:                 state.Reasoning.Conversation.Stage,
 		Interest:              state.Reasoning.Conversation.Interest.Value,
@@ -244,7 +249,7 @@ func stepScoreDetail(detail reasoningScoreDetail) StepScoreDetail {
 }
 
 func responseBubbles(output string) []ResponseBubble {
-	var message finalResponseBubbleMessage
+	var message responseBubbleMessage
 	if err := json.Unmarshal([]byte(output), &message); err != nil {
 		return nil
 	}
@@ -336,6 +341,7 @@ func (salesGPT *SalesGPT) contextBuilderNode(ctx context.Context, state salesGPT
 	}
 
 	state.Context = salesGPT.buildContext(messages)
+	state.ConversationHistory = salesGPT.buildConversationHistory(messages)
 	return state, nil
 }
 
@@ -343,14 +349,7 @@ func (salesGPT *SalesGPT) buildContext(messages []llms.ChatMessage) string {
 	var builder strings.Builder
 	messages = lastMessages(messages, salesGPT.contextWindowSize)
 
-	builder.WriteString("SALES AGENT PROFILE\n")
-	builder.WriteString(fmt.Sprintf("Salesperson name: %s\n", salesGPT.salespersonName))
-	builder.WriteString(fmt.Sprintf("Salesperson role: %s\n", salesGPT.salespersonRole))
-	builder.WriteString(fmt.Sprintf("Company name: %s\n", salesGPT.companyName))
-	builder.WriteString(fmt.Sprintf("Company business: %s\n", salesGPT.companyBusiness))
-	builder.WriteString(fmt.Sprintf("Company values: %s\n", salesGPT.companyValues))
-	builder.WriteString(fmt.Sprintf("Conversation purpose: %s\n", salesGPT.conversationPurpose))
-	builder.WriteString(fmt.Sprintf("Language: %s\n", salesGPT.language))
+	salesGPT.writeSalesAgentProfile(&builder)
 
 	builder.WriteString("\nCURRENT CONVERSATION STAGE\n")
 	if salesGPT.conversationStage == nil {
@@ -360,13 +359,8 @@ func (salesGPT *SalesGPT) buildContext(messages []llms.ChatMessage) string {
 	}
 
 	builder.WriteString("\nCONVERSATION HISTORY\n")
-	if len(messages) == 0 {
-		builder.WriteString("No conversation history yet.\n")
-	} else {
-		for _, message := range messages {
-			builder.WriteString(fmt.Sprintf("- %s: %s\n", message.GetType(), message.GetContent()))
-		}
-	}
+	builder.WriteString(salesGPT.buildConversationHistory(messages))
+	builder.WriteString("\n")
 
 	builder.WriteString("\nAVAILABLE TOOLS\n")
 	tools := salesGPT.tools.List()
@@ -407,6 +401,36 @@ func (salesGPT *SalesGPT) buildContext(messages []llms.ChatMessage) string {
 	} else {
 		for _, interest := range interests {
 			builder.WriteString(fmt.Sprintf("- %s: %s\n", interest.ID, interest.Description))
+		}
+	}
+
+	return strings.TrimSpace(builder.String())
+}
+
+func (salesGPT *SalesGPT) writeSalesAgentProfile(builder *strings.Builder) {
+	builder.WriteString("SALES AGENT PROFILE\n")
+	builder.WriteString(fmt.Sprintf("Salesperson name: %s\n", salesGPT.salespersonName))
+	builder.WriteString(fmt.Sprintf("Salesperson role: %s\n", salesGPT.salespersonRole))
+	builder.WriteString(fmt.Sprintf("Company name: %s\n", salesGPT.companyName))
+	builder.WriteString(fmt.Sprintf("Company business: %s\n", salesGPT.companyBusiness))
+	builder.WriteString(fmt.Sprintf("Company values: %s\n", salesGPT.companyValues))
+	builder.WriteString(fmt.Sprintf("Conversation purpose: %s\n", salesGPT.conversationPurpose))
+	builder.WriteString(fmt.Sprintf("Language: %s\n", salesGPT.language))
+}
+
+func (salesGPT *SalesGPT) buildConversationHistory(messages []llms.ChatMessage) string {
+	return salesGPT.buildConversationHistoryWithLimit(messages, salesGPT.contextWindowSize)
+}
+
+func (salesGPT *SalesGPT) buildConversationHistoryWithLimit(messages []llms.ChatMessage, limit int) string {
+	var builder strings.Builder
+	messages = lastMessages(messages, limit)
+
+	if len(messages) == 0 {
+		builder.WriteString("No conversation history yet.\n")
+	} else {
+		for _, message := range messages {
+			builder.WriteString(fmt.Sprintf("- %s: %s\n", message.GetType(), message.GetContent()))
 		}
 	}
 
@@ -574,41 +598,150 @@ func (salesGPT *SalesGPT) missingToolQuestionPlanNode(ctx context.Context, state
 
 func (salesGPT *SalesGPT) responseNode(ctx context.Context, state salesGPTNodeState) (salesGPTNodeState, error) {
 	if salesGPT.model == nil {
-		return state, fmt.Errorf("llm model is required for final response node")
+		return state, fmt.Errorf("llm model is required for response node")
+	}
+	if strings.TrimSpace(state.ResponseContext) == "" {
+		return state, fmt.Errorf("response context is required before response")
 	}
 
-	toolResults, err := json.MarshalIndent(state.ToolResults, "", "  ")
+	state.ResponsePrompt = newResponsePrompt(state.ResponseContext)
+	response, err := llms.GenerateFromSinglePrompt(ctx, salesGPT.model, state.ResponsePrompt)
 	if err != nil {
-		return state, fmt.Errorf("failed to encode tool results for final response: %w", err)
-	}
-	reasoning, err := json.MarshalIndent(state.Reasoning, "", "  ")
-	if err != nil {
-		return state, fmt.Errorf("failed to encode reasoning for final response: %w", err)
+		return state, fmt.Errorf("failed to generate response output: %w", err)
 	}
 
-	state.FinalResponsePrompt = newFinalResponsePrompt(
-		salesGPT.finalResponseProfile(),
-		string(reasoning),
-		string(toolResults),
-		state.MissingToolQuestionPlanOutput,
-	)
-	response, err := llms.GenerateFromSinglePrompt(ctx, salesGPT.model, state.FinalResponsePrompt)
-	if err != nil {
-		return state, fmt.Errorf("failed to generate final response output: %w", err)
-	}
-
-	state.FinalResponseOutput = strings.TrimSpace(response)
+	state.ResponseOutput = strings.TrimSpace(response)
 	if state.Invoke {
-		if err := salesGPT.conversationHistory.AddAIMessage(ctx, responseHistoryContent(state.FinalResponseOutput)); err != nil {
-			return state, fmt.Errorf("failed to save final response to conversation history: %w", err)
+		if err := salesGPT.conversationHistory.AddAIMessage(ctx, responseHistoryContent(state.ResponseOutput)); err != nil {
+			return state, fmt.Errorf("failed to save response to conversation history: %w", err)
 		}
 	}
 
 	return state, nil
 }
 
+func (salesGPT *SalesGPT) responseContextNode(ctx context.Context, state salesGPTNodeState) (salesGPTNodeState, error) {
+	messages, err := salesGPT.conversationHistory.Messages(ctx)
+	if err != nil {
+		return state, fmt.Errorf("failed to load conversation history for response context: %w", err)
+	}
+
+	state.ConversationHistory = salesGPT.buildConversationHistoryWithLimit(messages, responseContextConversationHistoryLimit)
+	state.ResponseContext = salesGPT.buildResponseContext(state)
+
+	return state, nil
+}
+
+func (salesGPT *SalesGPT) buildResponseContext(state salesGPTNodeState) string {
+	var builder strings.Builder
+
+	salesGPT.writeSalesAgentProfile(&builder)
+	builder.WriteString("\n\nCONVERSATION HISTORY\n")
+	if strings.TrimSpace(state.ConversationHistory) == "" {
+		builder.WriteString("No conversation history yet.\n")
+	} else {
+		builder.WriteString(state.ConversationHistory)
+		builder.WriteString("\n")
+	}
+
+	builder.WriteString("\n\nREASONING SUMMARY\n")
+	builder.WriteString(fmt.Sprintf("- Response language: %s\n", state.Reasoning.Language))
+	builder.WriteString(fmt.Sprintf("- Customer purpose: %s\n", state.Reasoning.Conversation.Purpose))
+	builder.WriteString(fmt.Sprintf("- Conversation stage: %s\n", state.Reasoning.Conversation.Stage))
+	builder.WriteString(fmt.Sprintf("- Interest level: %s\n", state.Reasoning.Conversation.Interest.Value))
+	builder.WriteString(fmt.Sprintf("- Interest evidence: %s\n", state.Reasoning.Conversation.Interest.Reason))
+	builder.WriteString(fmt.Sprintf("- Opening score: %d. %s Improvement: %s\n",
+		state.Reasoning.Conversation.Score.Opening.Score,
+		state.Reasoning.Conversation.Score.Opening.Reason,
+		state.Reasoning.Conversation.Score.Opening.Improvement,
+	))
+	builder.WriteString(fmt.Sprintf("- Engagement score: %d. %s Improvement: %s\n",
+		state.Reasoning.Conversation.Score.Engagement.Score,
+		state.Reasoning.Conversation.Score.Engagement.Reason,
+		state.Reasoning.Conversation.Score.Engagement.Improvement,
+	))
+	builder.WriteString(fmt.Sprintf("- Closing score: %d. %s Improvement: %s\n",
+		state.Reasoning.Conversation.Score.Closing.Score,
+		state.Reasoning.Conversation.Score.Closing.Reason,
+		state.Reasoning.Conversation.Score.Closing.Improvement,
+	))
+
+	builder.WriteString("\nHANDOFF\n")
+	if state.Reasoning.Handoff.Required {
+		builder.WriteString(fmt.Sprintf("- Required: yes\n- Priority: %s\n- Reason: %s\n- Summary for human agent: %s\n",
+			state.Reasoning.Handoff.Priority,
+			state.Reasoning.Handoff.Reason,
+			state.Reasoning.Handoff.Summary,
+		))
+	} else {
+		builder.WriteString("- Required: no\n")
+	}
+
+	builder.WriteString("\nNEXT RESPONSE PLAN\n")
+	if len(state.Reasoning.Plan.Actions) == 0 {
+		builder.WriteString("- No planned actions.\n")
+	} else {
+		for index, action := range state.Reasoning.Plan.Actions {
+			builder.WriteString(fmt.Sprintf("- Step %d: %s Reason: %s\n",
+				index+1,
+				action.Action,
+				action.Rationale,
+			))
+		}
+	}
+
+	builder.WriteString("\nREASONED TOOL REQUESTS\n")
+	if len(state.Reasoning.Tools) == 0 {
+		builder.WriteString("- No tools requested by reasoning.\n")
+	} else {
+		for _, tool := range state.Reasoning.Tools {
+			builder.WriteString(fmt.Sprintf("- Tool: %s\n", tool.ToolName))
+			builder.WriteString(fmt.Sprintf("  Action: %s\n", tool.Action))
+			builder.WriteString(fmt.Sprintf("  Reason: %s\n", tool.Reason))
+			builder.WriteString(fmt.Sprintf("  Known parameters: %v\n", tool.Params))
+			if len(tool.Missing) == 0 {
+				builder.WriteString("  Missing parameters: none\n")
+			} else {
+				builder.WriteString("  Missing parameters:\n")
+				for _, missing := range tool.Missing {
+					required := "optional"
+					if missing.Required {
+						required = "required"
+					}
+					builder.WriteString(fmt.Sprintf("    - %s (%s)\n", missing.ParamName, required))
+				}
+			}
+		}
+	}
+
+	builder.WriteString("\nEXECUTED TOOL RESULTS\n")
+	if len(state.ToolResults) == 0 {
+		builder.WriteString("- No tools were executed.\n")
+	} else {
+		for _, result := range state.ToolResults {
+			builder.WriteString(fmt.Sprintf("- Tool: %s\n", result.ToolName))
+			builder.WriteString(fmt.Sprintf("  Parameters: %v\n", result.Params))
+			if strings.TrimSpace(result.Error) != "" {
+				builder.WriteString(fmt.Sprintf("  Error: %s\n", result.Error))
+				continue
+			}
+			builder.WriteString(fmt.Sprintf("  Result: %v\n", result.Output))
+		}
+	}
+
+	builder.WriteString("\nMISSING-PARAMETER QUESTION PLAN\n")
+	if strings.TrimSpace(state.MissingToolQuestionPlanOutput) == "" {
+		builder.WriteString("No missing-parameter question plan.\n")
+	} else {
+		builder.WriteString(state.MissingToolQuestionPlanOutput)
+		builder.WriteString("\n")
+	}
+
+	return strings.TrimSpace(builder.String())
+}
+
 func responseHistoryContent(output string) string {
-	var message finalResponseBubbleMessage
+	var message responseBubbleMessage
 	if err := json.Unmarshal([]byte(output), &message); err != nil {
 		return output
 	}
@@ -638,18 +771,4 @@ func responseHistoryContent(output string) string {
 	}
 
 	return strings.Join(bubbles, "\n")
-}
-
-func (salesGPT *SalesGPT) finalResponseProfile() string {
-	var builder strings.Builder
-
-	builder.WriteString(fmt.Sprintf("Salesperson name: %s\n", salesGPT.salespersonName))
-	builder.WriteString(fmt.Sprintf("Salesperson role: %s\n", salesGPT.salespersonRole))
-	builder.WriteString(fmt.Sprintf("Company name: %s\n", salesGPT.companyName))
-	builder.WriteString(fmt.Sprintf("Company business: %s\n", salesGPT.companyBusiness))
-	builder.WriteString(fmt.Sprintf("Company values: %s\n", salesGPT.companyValues))
-	builder.WriteString(fmt.Sprintf("Conversation purpose: %s\n", salesGPT.conversationPurpose))
-	builder.WriteString(fmt.Sprintf("Language: %s", salesGPT.language))
-
-	return builder.String()
 }
